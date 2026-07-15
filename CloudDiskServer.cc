@@ -1,12 +1,14 @@
 #include "CloudDiskServer.h"
 
 #include <wfrest/HttpDef.h>
+#include <wfrest/HttpMsg.h>
 #include <wfrest/PathUtil.h>
 #include <workflow/HttpUtil.h>
 #include <workflow/MySQLResult.h>
 #include <workflow/Workflow.h>
 #include <workflow/mysql_types.h>
 
+#include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
 
@@ -28,7 +30,7 @@ void CloudDiskServer::register_routes() {
     register_www_module();
     register_auth_module();
     register_user_module();
-    // register_file_module();
+    register_file_module();
     // ...
 }
 
@@ -39,6 +41,7 @@ void CloudDiskServer::register_www_module() {
 
 void CloudDiskServer::register_auth_module() {
     // wfrest支持类型的处理函数：Handler, SeriesHandler(和Workflow集成)
+    // 注册逻辑
     server_.POST("/api/v1/auth/register", [](const HttpReq* req, HttpResp* resp) {
         // 解析请求 (抓包)
         // 处理业务逻辑
@@ -86,6 +89,7 @@ void CloudDiskServer::register_auth_module() {
                 ret["data"]["userId"] = id;
                 ret["data"]["username"] = username;
                 resp->Json(ret.dump());
+                filesystem::create_directories("upload_files/" + username);
                 return;
             } else {
                 resp->set_status(409);
@@ -98,6 +102,7 @@ void CloudDiskServer::register_auth_module() {
         });
     });
 
+    //登录逻辑
     server_.POST("/api/v1/auth/login", [](const HttpReq* req, HttpResp* resp, SeriesWork* series) {
         // 解析请求 (抓包)
         // 处理业务逻辑
@@ -172,6 +177,7 @@ void CloudDiskServer::register_auth_module() {
     });
 }
 
+// 获取用户信息
 void CloudDiskServer::register_user_module() {
     server_.GET("/api/v1/user/me", [](const HttpReq* req, HttpResp* resp) {
         string authorization = req->header("Authorization");
@@ -193,6 +199,8 @@ void CloudDiskServer::register_user_module() {
             resp->Json(ret.dump());
             return;
         } else {
+            // token验证成功后 user只会存储id和username
+            // 要获得created_at只能通过sql查询
             string sql =
                 "SELECT id, username, created_at FROM tbl_user WHERE id=" + to_string(user.id);
             resp->MySQL(DatabaseURL, sql, [resp](MySQLResultCursor* cursor) {
@@ -223,5 +231,186 @@ void CloudDiskServer::register_user_module() {
                 return;
             });
         }
+    });
+}
+
+// 获取文件列表
+void CloudDiskServer::register_file_module() {
+    server_.GET("/api/v1/files", [](const HttpReq* req, HttpResp* resp) {
+        string authorization = req->header("Authorization");
+        if (authorization.empty() || authorization.find("Bearer ") != 0) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        }
+        User user;
+        string token = authorization.substr(7);
+        if (!CryptoUtil::verify_token(token, user)) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        }
+        // 令牌校验成功 返回文件列表
+        // 文件列表可以通过uid 查询
+        string sql = "select * from tbl_file where uid = " + to_string(user.id) + ";";
+        cout << "[sql] : " << sql << endl;
+        resp->MySQL(DatabaseURL, sql, [resp](MySQLResultCursor* cursor) {
+            if (cursor->get_cursor_status() != MYSQL_STATUS_GET_RESULT) {
+                resp->set_status(500);
+                json ret = json::object();
+                ret["status"] = "error";
+                ret["message"] = "内部服务器错误";
+                resp->Json(ret.dump());
+                return;
+            }
+            resp->set_status(200);
+            resp->add_header_pair("application", "json");
+            // 此错有可能解析错误
+            json ret = json::object();
+            ret["status"] = "success";
+            ret["message"] = "获取文件列表成功";
+            json files = json::array();
+            map<string, MySQLCell> record;
+            while (cursor->fetch_row(record)) {
+                json file = json::object();
+                file["fileId"] = record["id"].as_int();
+                file["filename"] = record["filename"].as_string();
+                file["size"] = record["size"].as_int();
+                file["createdAt"] = record["created_at"].as_string();
+                file["updatedAt"] = record["last_update"].as_string();
+                files.push_back(file);
+            }
+            ret["data"]["files"] = files;
+            resp->Json(ret.dump());
+            return;
+        });
+    });
+
+    // 上传文件
+    server_.POST("/api/v1/files", [](const HttpReq* req, HttpResp* resp) {
+        string authorization = req->header("Authorization");
+        if (authorization.empty() || authorization.find("Bearer ") != 0) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        }
+        User user;
+        string token = authorization.substr(7);
+        if (!CryptoUtil::verify_token(token, user)) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        }
+        // user结构体里面现在有id 和 username
+        if (req->content_type() != MULTIPART_FORM_DATA) {
+            resp->set_status(400);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "请求格式有误";
+            resp->Json(ret.dump());
+            return;
+        }
+        const Form& form = req->form();
+        for (const auto& [_, file] : form) {
+            // 获取文件名和其文件内容
+            const string& filename = file.first;
+            const string& content = file.second;
+            // 获得/的最后一个文件名， 为了安全起见
+            string basename = PathUtil::base(filename);
+            string hashcode = CryptoUtil::generate_hashcode(
+                (const unsigned char*)content.c_str(), content.size());
+            string sql = "INSERT INTO tbl_file (uid , filename , hashcode , size) VALUES(" +
+                         to_string(user.id) + ", '" + basename + "', '" + hashcode + "', " +
+                         to_string(content.size()) + ");";
+            cout << "[sql] : " << sql << endl;
+            resp->MySQL(
+                DatabaseURL, sql, [user, basename, content, resp](MySQLResultCursor* cursor) {
+                    if (cursor->get_cursor_status() == MYSQL_STATUS_OK &&
+                        cursor->get_affected_rows() == 1) {
+                        // 如果数据库任务执行成功 ，我们就给他存到本地
+                        filesystem::create_directories("upload_files/" + user.username);
+                        string path = "upload_files/" + user.username + "/" + basename;
+                        resp->Save(path, move(content));
+                        resp->set_status(200);
+                        resp->add_header_pair("application", "json");
+                        json ret = json::object();
+                        ret["status"] = "success";
+                        ret["message"] = "上传成功";
+                        ret["data"]["fileId"] = cursor->get_insert_id();
+                        ret["data"]["filename"] = basename;
+                        resp->Json(ret.dump());
+                    } else {
+                        // 这里虽然说的是内部服务器错误 ， 但其实filename相同也会出问题
+                        resp->set_status(500);
+                        json ret = json::object();
+                        ret["status"] = "error";
+                        ret["message"] = "内部服务器错误";
+                        resp->Json(ret.dump());
+                        return;
+                    }
+                });
+        }
+    });
+
+    server_.GET("/api/v1/file/{id}", [](const HttpReq* req, HttpResp* resp) {
+        string authorization = req->header("Authorization");
+        if (authorization.empty() || authorization.find("Bearer ") != 0) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        }
+        User user;
+        string token = authorization.substr(7);
+        if (!CryptoUtil::verify_token(token, user)) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        }
+        const string& s_id = req->param("id");
+        int id = stoi(s_id);
+        string sql = "select filename from tbl_file where id = " + to_string(id) + ";";
+        resp->MySQL(DatabaseURL, sql, [resp, user](MySQLResultCursor* cursor) {
+            if (cursor->get_cursor_status() != MYSQL_STATUS_GET_RESULT) {
+                resp->set_status(500);
+                json ret = json::object();
+                ret["status"] = "error";
+                ret["message"] = "内部服务器错误";
+                resp->Json(ret.dump());
+                return;
+            }
+            if (cursor->get_rows_count() == 0) {
+                resp->set_status(404);
+                json ret = json::object();
+                ret["status"] = "error";
+                ret["message"] = "文件不存在";
+                resp->Json(ret.dump());
+                return;
+            }
+            resp->set_status(200);
+            map<string, MySQLCell> record;
+            cursor->fetch_row(record);
+            resp->add_header_pair(
+                "Content-Disposition", "attachment;filename=" + record["filename"].as_string());
+            string path = "upload_files/" + user.username + "/" + record["filename"].as_string();
+            resp->File(path);
+        });
     });
 }
