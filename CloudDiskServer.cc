@@ -27,7 +27,7 @@ void CloudDiskServer::register_routes() {
     // 设置静态资源的路由
     register_www_module();
     register_auth_module();
-    // register_user_module();
+    register_user_module();
     // register_file_module();
     // ...
 }
@@ -169,5 +169,59 @@ void CloudDiskServer::register_auth_module() {
             }
         });
         // 生成响应
+    });
+}
+
+void CloudDiskServer::register_user_module() {
+    server_.GET("/api/v1/user/me", [](const HttpReq* req, HttpResp* resp) {
+        string authorization = req->header("Authorization");
+        if (authorization.empty() || authorization.find("Bearer ") != 0) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        }
+        User user;
+        string token = authorization.substr(7);
+        if (!CryptoUtil::verify_token(token, user)) {
+            resp->set_status(401);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "无效的访问令牌";
+            resp->Json(ret.dump());
+            return;
+        } else {
+            string sql =
+                "SELECT id, username, created_at FROM tbl_user WHERE id=" + to_string(user.id);
+            resp->MySQL(DatabaseURL, sql, [resp](MySQLResultCursor* cursor) {
+                // 拿到完整的、最新的用户信息
+                if (cursor->get_cursor_status() != MYSQL_STATUS_GET_RESULT) {
+                    resp->set_status(500);
+                    json ret = json::object();
+                    ret["status"] = "error";
+                    ret["message"] = "内部服务器错误";
+                    resp->Json(ret.dump());
+                    return;
+                }
+                User user;
+                map<string, MySQLCell> record;
+                cursor->fetch_row(record);
+                user.id = record["id"].as_int();
+                user.username = record["username"].as_string();
+                user.createdAt = record["created_at"].as_string();
+                resp->set_status(200);
+                resp->add_header_pair("application", "json");
+                json ret = json::object();
+                ret["status"] = "success";
+                ret["message"] = "获取个人信息成功";
+                ret["data"]["userId"] = user.id;
+                ret["data"]["username"] = user.username;
+                ret["data"]["createdAt"] = user.createdAt;
+                resp->Json(ret.dump());
+                return;
+            });
+        }
     });
 }
