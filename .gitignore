@@ -39,6 +39,7 @@
 *.out
 *.app
 server
+upload_files
 
 # Build directories
 build/
