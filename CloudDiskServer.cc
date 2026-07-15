@@ -1,13 +1,17 @@
 #include "CloudDiskServer.h"
-#include "CryptoUtil.h"
-#include "common.h"
-#include <iostream>
-#include <nlohmann/json.hpp>
+
+#include <wfrest/HttpDef.h>
 #include <wfrest/PathUtil.h>
 #include <workflow/HttpUtil.h>
 #include <workflow/MySQLResult.h>
 #include <workflow/Workflow.h>
 #include <workflow/mysql_types.h>
+
+#include <iostream>
+#include <nlohmann/json.hpp>
+
+#include "CryptoUtil.h"
+#include "common.h"
 
 using namespace std;
 using namespace std::placeholders;
@@ -16,11 +20,10 @@ using namespace protocol;
 using json = nlohmann::json;
 
 // 数据库的URL（需要修改！）
-static const string DatabaseURL = "mysql://root:1234@localhost/CloudDisk";
+static const string DatabaseURL = "mysql://root:123456@localhost/CloudDisk";
 static const int RetryMax = 3;
 
-void CloudDiskServer::register_routes()
-{
+void CloudDiskServer::register_routes() {
     // 设置静态资源的路由
     register_www_module();
     register_auth_module();
@@ -29,19 +32,70 @@ void CloudDiskServer::register_routes()
     // ...
 }
 
-void CloudDiskServer::register_www_module()
-{
+void CloudDiskServer::register_www_module() {
     server_.Static("/", "./www/index.html");
     server_.Static("/static", "./www/static");
 }
 
-void CloudDiskServer::register_auth_module()
-{
+void CloudDiskServer::register_auth_module() {
     // wfrest支持类型的处理函数：Handler, SeriesHandler(和Workflow集成)
     server_.POST("/api/v1/auth/register", [](const HttpReq* req, HttpResp* resp) {
         // 解析请求 (抓包)
         // 处理业务逻辑
+        if (req->content_type() != wfrest::APPLICATION_JSON) {
+            resp->set_status(HttpStatusBadRequest);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "请求格式有误";
+            resp->Json(ret.dump());
+            return;
+        }
+        json js = json::parse(req->body());
+        string username = js["username"];
+        string password = js["password"];
+        string confirm = js["confirm"];
+        if (username.empty() || password.empty()) {
+            resp->set_status(HttpStatusBadRequest);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "用户名和密码不能为空";
+            resp->Json(ret.dump());
+            return;
+        }
+        if (!(password == confirm)) {
+            resp->set_status(HttpStatusBadRequest);
+            json ret = json::object();
+            ret["status"] = "error";
+            ret["message"] = "两次输入的密码不一致";
+            resp->Json(ret.dump());
+            return;
+        }
         // 生成响应
+        string pwhash = CryptoUtil::hash_password(password);
+        string sql = "INSERT into tbl_user (username , pwhash) values ('" + username + "' , '" +
+                     pwhash + "');";
+        resp->MySQL(DatabaseURL, sql, [resp, username](MySQLResultCursor* cursor) {
+            if (cursor->get_cursor_status() == MYSQL_STATUS_OK &&
+                cursor->get_affected_rows() == 1) {
+                resp->set_status(201);
+                resp->add_header_pair("application", "json");
+                json ret = json::object();
+                int id = cursor->get_insert_id();
+                ret["status"] = "success";
+                ret["message"] = "注册成功";
+                ret["data"]["userId"] = id;
+                ret["data"]["username"] = username;
+                resp->Json(ret.dump());
+                return;
+            } else {
+                resp->set_status(409);
+                json ret = json::object();
+                ret["status"] = "error";
+                ret["message"] = "用户名已存在";
+                resp->Json(ret.dump());
+                return;
+            }
+        });
     });
 
     server_.POST("/api/v1/auth/login", [](const HttpReq* req, HttpResp* resp, SeriesWork* series) {
