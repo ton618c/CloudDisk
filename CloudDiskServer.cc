@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CryptoUtil.h"
+#include "OssManager.hh"
 #include "common.h"
 
 using namespace std;
@@ -21,7 +22,7 @@ using namespace wfrest;
 using namespace protocol;
 using json = nlohmann::json;
 
-// 数据库的URL（需要修改！）
+// 数据库的URL
 static const string DatabaseURL = "mysql://root:123456@localhost/CloudDisk";
 static const int RetryMax = 3;
 
@@ -342,6 +343,7 @@ void CloudDiskServer::register_file_module() {
                         // 如果数据库任务执行成功 ，我们就给他存到本地
                         filesystem::create_directories("upload_files/" + user.username);
                         string path = "upload_files/" + user.username + "/" + basename;
+                        OssManager::getInstance()->upload_file_to_oss(path, content);
                         resp->Save(path, move(content));
                         resp->set_status(200);
                         resp->add_header_pair("application", "json");
