@@ -17,7 +17,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ../)
 add_executable(server
     CryptoUtil.cc
     CloudDiskServer.cc
-    OssManager.cc
     main.cc
 )
 
@@ -37,4 +36,27 @@ target_link_libraries(server PRIVATE
     sodium
     jwt
     wfrest
+    -lSimpleAmqpClient
+)
+
+# 生成的可执行程序
+add_executable(rabbitconsumer
+    RabbitConsumer.cc
+    OssManager.cc
+)
+
+# 设置编译选项
+# PRIVATE: 传播属性，一般填PRIVATE
+target_compile_options(rabbitconsumer PRIVATE
+    -fno-rtti
+    -g
+)
+
+# -lcrypto -lssl -ljwt -lwfrest
+target_link_libraries(rabbitconsumer PRIVATE 
+    -lalibabacloud-oss-cpp-sdk
+    -lcurl
+    -lcrypto
+    -lpthread
+    -lSimpleAmqpClient
 )
