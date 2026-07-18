@@ -40,6 +40,7 @@
 *.app
 server
 upload_files
+rabbitconsumer
 
 # Build directories
 build/
