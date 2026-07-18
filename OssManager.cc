@@ -20,14 +20,14 @@ OssManager* OssManager::getInstance() {  // double check
     return _ossInstance;
 }
 
-void OssManager::upload_file_to_oss(string object_name, string content) {
+bool OssManager::upload_file_to_oss(string object_name, string content) {
     // 2. 设置OSS账号信息，创建OssClient
     string endpoint = "oss-cn-wuhan-lr.aliyuncs.com";
     const char* aki = getenv("OSS_ACCESS_KEY_ID");
     const char* aks = getenv("OSS_ACCESS_KEY_SECRET");
     if (!aki || !aks) {
         cerr << "请在.env文件中设置id和key值" << endl;
-        return;
+        return false;
     }
     string accessKeyId = aki;
     string accessKeySecret = aks;
@@ -46,6 +46,7 @@ void OssManager::upload_file_to_oss(string object_name, string content) {
         cout << "PutObject FAILED"
              << ", code:" << outcome.error().Code() << ", message:" << outcome.error().Message()
              << ", requestId:" << outcome.error().RequestId() << endl;
-        exit(1);
+        return false;
     }
+    return true;
 }

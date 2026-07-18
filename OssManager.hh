@@ -9,7 +9,7 @@ using namespace std;
 class OssManager {
 public:
     static OssManager* getInstance();
-    void upload_file_to_oss(string object_name, string file);
+    bool upload_file_to_oss(string object_name, string file);
     OssManager(const OssManager& rhs) = delete;
     OssManager& operator=(const OssManager& rhs) = delete;
 

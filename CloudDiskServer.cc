@@ -1,5 +1,6 @@
 #include "CloudDiskServer.h"
 
+#include <SimpleAmqpClient/SimpleAmqpClient.h>
 #include <wfrest/HttpDef.h>
 #include <wfrest/HttpMsg.h>
 #include <wfrest/PathUtil.h>
@@ -20,6 +21,7 @@ using namespace std;
 using namespace std::placeholders;
 using namespace wfrest;
 using namespace protocol;
+using namespace AmqpClient;
 using json = nlohmann::json;
 
 // 数据库的URL
@@ -343,8 +345,18 @@ void CloudDiskServer::register_file_module() {
                         // 如果数据库任务执行成功 ，我们就给他存到本地
                         filesystem::create_directories("upload_files/" + user.username);
                         string path = "upload_files/" + user.username + "/" + basename;
-                        OssManager::getInstance()->upload_file_to_oss(path, content);
-                        resp->Save(path, move(content));
+                        // 这里不再直接对文件进行备份
+                        // 而是通过channem上传到exchange
+                        // 让消息队列异步执行
+                        resp->Save(path, std::move(content), [path](const struct FileIOArgs*) {
+                            json task;
+                            task["path"] = path;
+                            task["objectName"] = path;
+                            auto channel =
+                                Channel::Create("127.0.0.1", 5672, "guest", "guest", "/");
+                            auto message = BasicMessage::Create(task.dump());
+                            channel->BasicPublish("oss.direct", "oss", message);
+                        });
                         resp->set_status(200);
                         resp->add_header_pair("application", "json");
                         json ret = json::object();
