@@ -1,3 +1,4 @@
+#include <google/protobuf/stubs/common.h>
 #include <signal.h>
 
 #include <fstream>
@@ -14,7 +15,7 @@ void sig_handler(int) { waitGroup.done(); }
 int main() {
     signal(SIGINT, sig_handler);
     srand(time(NULL));
-
+    GOOGLE_PROTOBUF_VERIFY_VERSION;
     CloudDiskServer server;
     // AutoRelease ar{OssManager::getInstance()};
     // 注册路由
@@ -27,4 +28,6 @@ int main() {
     } else {
         cerr << "Error: Server start FAILED!" << endl;
     }
+    google::protobuf::ShutdownProtobufLibrary();
+    return 0;
 }
