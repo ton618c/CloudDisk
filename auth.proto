@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+message RegisterRequest{
+    string username = 1; // 用户名
+    string password = 2; // 密码
+    string confirm = 3;  // 确认密码
+}
+
+message RegisterResponse{
+    int32 code = 1; //状态码
+    string status = 2;
+    string message = 3; // 填充json数据 写在响应体里面
+    int32 userId = 4; // 只有注册成功才会有后两项
+    string username = 5;
+}
+
+message LoginRequest{
+    string username = 1;
+    string password = 2;
+}
+
+message LoginResponse{
+    int32 code = 1;
+    string status = 2;
+    string message = 3;
+    string accessToken = 4; // 登录成功才有后四项
+    string tokenType = 5;
+    int32 userId = 6;
+    string username = 7;
+}
+
+service Auth{
+    rpc AuthRegister(RegisterRequest) returns (RegisterResponse);
+    rpc AuthLogin(LoginRequest) returns (LoginResponse);
+}

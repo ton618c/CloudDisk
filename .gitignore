@@ -41,6 +41,7 @@
 server
 upload_files
 rabbitconsumer
+auth_server
 
 # Build directories
 build/

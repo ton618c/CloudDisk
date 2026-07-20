@@ -13,10 +13,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 设置可执行程序生成的路径
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ../)
 
+# 主程序的可执行程序
 # 生成的可执行程序
 add_executable(server
     CryptoUtil.cc
     CloudDiskServer.cc
+    auth.pb.cc
     main.cc
 )
 
@@ -28,7 +30,7 @@ target_compile_options(server PRIVATE
 )
 
 # -lcrypto -lssl -ljwt -lwfrest
-target_link_libraries(server PRIVATE 
+target_link_libraries(server PRIVATE
     -lalibabacloud-oss-cpp-sdk
     -lcurl
     -lcrypto
@@ -37,8 +39,13 @@ target_link_libraries(server PRIVATE
     jwt
     wfrest
     -lSimpleAmqpClient
+    srpc
+    protobuf
+    -llz4
+    -lsnappy
 )
 
+# 消息队列的执行程序
 # 生成的可执行程序
 add_executable(rabbitconsumer
     RabbitConsumer.cc
@@ -59,4 +66,28 @@ target_link_libraries(rabbitconsumer PRIVATE
     -lcrypto
     -lpthread
     -lSimpleAmqpClient
+)
+
+# 注册和登录的可执行程序
+# 已拆为微服务架构
+add_executable(auth_server
+    AuthServer.cc
+    CryptoUtil.cc
+    auth.pb.cc           
+)
+
+target_compile_options(auth_server PRIVATE
+    -g
+)
+
+target_link_libraries(auth_server PRIVATE 
+    -lcrypto
+    -lpthread
+    sodium
+    jwt              
+    -lsrpc
+    -llz4 
+    -lsnappy                   
+    -lprotobuf      
+    -lworkflow          
 )
