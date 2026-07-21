@@ -48,22 +48,31 @@ public:
         cout << "[sql] : " << sql << endl;
         WFMySQLTask *mysql_task = WFTaskFactory::create_mysql_task(
             DatabaseURL, RetryMax, [username, response](WFMySQLTask *task) {
-                MySQLResultCursor cursor(task->get_resp());
-                if (cursor.get_cursor_status() == MYSQL_STATUS_OK &&
-                    cursor.get_affected_rows() == 1) {
-                    response->set_code(201);
-                    response->set_status("success");
-                    response->set_message("注册成功");
-                    int id = cursor.get_insert_id();
-                    response->set_userid(id);
-                    response->set_username(username);
-                    filesystem::create_directories("upload_files/" + username);
-                } else {
+                // 第 1 层：网络层
+                if (task->get_state() != WFT_STATE_SUCCESS) {
+                    response->set_code(500);
+                    response->set_status("error");
+                    response->set_message("网络请求失败");
+                    return;
+                }
+                // 第 2 层：MySQL 协议层（SQL 被服务器拒绝）
+                if (task->get_resp()->get_packet_type() == MYSQL_PACKET_ERROR) {
                     response->set_code(409);
                     response->set_status("error");
                     response->set_message("用户名已存在");
+                    return;
                 }
+                // 第 3 层：结果集层（走到这里 INSERT 一定成功了）
+                MySQLResultCursor cursor(task->get_resp());
+                response->set_code(201);
+                response->set_status("success");
+                response->set_message("注册成功");
+                int id = cursor.get_insert_id();
+                response->set_userid(id);
+                response->set_username(username);
+                filesystem::create_directories("upload_files/" + username);
             });
+
         mysql_task->get_req()->set_query(sql);
         SeriesWork *series = ctx->get_series();
         series->push_back(mysql_task);
