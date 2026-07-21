@@ -1,5 +1,7 @@
+#include <ppconsul/agent.h>
 #include <signal.h>
 #include <workflow/MySQLResult.h>
+#include <workflow/WFTask.h>
 #include <workflow/WFTaskFactory.h>
 #include <workflow/Workflow.h>
 #include <workflow/mysql_types.h>
@@ -12,6 +14,9 @@
 using namespace srpc;
 using namespace std;
 using namespace protocol;
+using ppconsul::Consul;
+using namespace std::placeholders;
+using namespace ppconsul::agent;
 static WFFacilities::WaitGroup waitGroup(1);
 static const string DatabaseURL = "mysql://root:123456@localhost/CloudDisk";
 static const int RetryMax = 3;
@@ -120,16 +125,43 @@ public:
     }
 };
 
+void timer_callback(WFTimerTask *timerTask, Agent &agent) {
+    if (timerTask->get_state() != WFT_STATE_SUCCESS) {
+        cout << "定时器任务取消" << endl;
+        return;
+    }
+    agent.servicePass("AuthService1");
+    WFTimerTask *next = WFTaskFactory::create_timer_task(
+        "health_check", 5, 0, bind(timer_callback, _1, ref(agent)));
+    series_of(timerTask)->push_back(next);
+}
 int main() {
     GOOGLE_PROTOBUF_VERIFY_VERSION;
     signal(SIGINT, sighandler);
+    // 使用默认参数，创建srpc服务器
     SRPCServer server;
 
+    // 注册服务
+    // 一个SRPCServer可以注册多个Service，一个Service可以包含多个RPC
     AuthService authService;
     server.add_service(&authService);
 
     if (server.start(1314) == 0) {
+        // 指定注册中心 Consul 的ip地址，端口和数据中心
+        Consul consul("http://127.0.0.1:8500", ppconsul::kw::dc = "dc.1");
+        // 创建Consul客户端代理
+        Agent agent(consul);
+        // 注册实例的元信息
+        agent.registerService(kw::id = "AuthService1", kw::name = "AuthService",
+            kw::address = "127.0.0.1", kw::port = 1314, kw::check = TtlCheck{chrono::seconds(10)});
+
+        // 定时发送心跳包
+        WFTimerTask *timerTask = WFTaskFactory::create_timer_task(
+            "health_check", 5, 0, bind(timer_callback, _1, ref(agent)));
+        timerTask->start();
+
         waitGroup.wait();
+        WFTaskFactory::cancel_by_name("health_check");
         server.stop();
     } else {
         cerr << "Error: Server start FAILED!" << endl;
