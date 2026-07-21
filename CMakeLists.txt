@@ -89,5 +89,6 @@ target_link_libraries(auth_server PRIVATE
     -llz4 
     -lsnappy                   
     -lprotobuf      
-    -lworkflow          
+    -lworkflow  
+    -lppconsul        
 )
